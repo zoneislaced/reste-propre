@@ -1,122 +1,178 @@
-import json, os, re, zipfile
+import json
+import re
+import difflib
+from pathlib import Path
 
-with open("pkg/data/towns.json", "r", encoding="utf-8") as f:
-    towns = json.load(f)
+ROOT = Path(__file__).resolve().parent.parent
+TOWNS_FILE = ROOT / "data" / "towns.json"
+CONFIG_FILE = ROOT / "data" / "site_config.json"
+TEMPLATE_FILE = ROOT / "templates" / "town-page.html"
+INDEX_FILE = ROOT / "index.html"
 
-with open("pkg/index.html", "r", encoding="utf-8") as f:
-    src_html = f.read()
+FEATURED_SLUGS = [
+    "cleaning-services-nairobi",
+    "cleaning-services-ruiru",
+    "cleaning-services-kikuyu",
+    "cleaning-services-thika",
+    "cleaning-services-mombasa",
+    "cleaning-services-nakuru",
+]
 
-with open("pkg/templates/town-page.html", "r", encoding="utf-8") as f:
-    src_tpl = f.read()
 
-phone = "0706855633"
-tel_href = "tel:+254706855633"
-brand_name = "EverClean Services"
-tagline = "Consistent Quality. Lasting Cleanliness"
-logo_url = "https://raw.githubusercontent.com/zoneislaced/reste-propre/refs/heads/main/Professionals%20Cleaners%20Service%20Logo%20-%20Made%20with%20PosterMyWall.jpg"
+def strip_html(html_text: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", html_text)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
-def apply_branding_to_html(html_str: str) -> str:
-    h = html_str
-    # Title & meta description
-    h = h.replace("Reste Propre | A Higher Standard of Clean", f"{brand_name} | {tagline}")
-    h = h.replace("Reste Propre", brand_name)
-    h = h.replace("reste <b>propre</b>", f"<b>{brand_name}</b>")
-    h = h.replace("CLEANING & FACILITIES", tagline)
-    h = h.replace("A HIGHER STANDARD OF CLEAN", tagline.upper())
-    h = h.replace("Designed with care.", tagline)
 
-    # Logo image in header and footer brands
-    logo_img = (
-        f'<img src="{logo_url}" alt="{brand_name} logo" '
-        f'style="height: 36px; width: auto; border-radius: 6px; object-fit: contain; flex-shrink: 0;">'
+def sync_homepage(towns: list) -> None:
+    if not INDEX_FILE.exists():
+        return
+    html_text = INDEX_FILE.read_text(encoding="utf-8")
+    if "<!-- PSEO_TOWNS_START -->" not in html_text or "<!-- PSEO_TOWNS_END -->" not in html_text:
+        return
+
+    by_slug = {t["slug"]: t for t in towns}
+    featured = [by_slug[s] for s in FEATURED_SLUGS if s in by_slug]
+
+    featured_links = "\n        ".join(
+        f'<a href="{t[\"slug\"]}/" class="location-item"><span class="location-index">{i+1:02d}</span><span>{t[\"name\"]}</span><span class="location-arrow">↗</span></a>'
+        for i, t in enumerate(featured)
     )
-    # Replace header brand mark
-    h = re.sub(
-        r'(<a class="brand"[^>]*>)\s*<span class="brand-mark"[^>]*>.*?</span>',
-        r'\1\n      ' + logo_img,
-        h,
-        count=1,
+    all_links = "\n          ".join(
+        f'<a href="{t[\"slug\"]}/" class="location-item"><span class="location-index">{i+1:02d}</span><span>{t[\"name\"]} <small>({t.get(\"county\", \"\")})</small></span><span class="location-arrow">↗</span></a>'
+        for i, t in enumerate(towns)
+    )
+    towns_block = (
+        "<!-- PSEO_TOWNS_START -->\n"
+        f"        {featured_links}\n"
+        f'        <details class="all-towns-drawer" style="margin-top: 0.75rem;">\n'
+        f'          <summary style="cursor: pointer; font-weight: 600; padding: 0.65rem 0; list-style: none;">Browse all {len(towns)} towns across Kenya <span>+</span></summary>\n'
+        f'          <div class="all-towns-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.4rem; max-height: 360px; overflow-y: auto; padding-top: 0.5rem;">\n'
+        f"          {all_links}\n"
+        "          </div>\n"
+        "        </details>\n"
+        "        <!-- PSEO_TOWNS_END -->"
+    )
+    html_text = re.sub(
+        r"<!-- PSEO_TOWNS_START -->.*?<!-- PSEO_TOWNS_END -->",
+        towns_block,
+        html_text,
         flags=re.DOTALL,
     )
-    # Replace footer brand mark
-    h = re.sub(
-        r'(<a class="brand brand-footer"[^>]*>)\s*<span class="brand-mark"[^>]*>.*?</span>',
-        r'\1\n        ' + logo_img,
-        h,
-        count=1,
-        flags=re.DOTALL,
+
+    if "<!-- PSEO_TOWN_SELECT_START -->" in html_text and "<!-- PSEO_TOWN_SELECT_END -->" in html_text:
+        opts = "\n              ".join(f'<option value="{t[\"name\"]}">{t[\"name\"]}</option>' for t in towns)
+        select_block = (
+            "<!-- PSEO_TOWN_SELECT_START -->\n"
+            f'            <select name="town" required><option value="">Select town</option>{opts}<option value="Other / Not listed">Other / Not listed</option></select>\n'
+            "            <!-- PSEO_TOWN_SELECT_END -->"
+        )
+        html_text = re.sub(
+            r"<!-- PSEO_TOWN_SELECT_START -->.*?<!-- PSEO_TOWN_SELECT_END -->",
+            select_block,
+            html_text,
+            flags=re.DOTALL,
+        )
+
+    INDEX_FILE.write_text(html_text, encoding="utf-8")
+
+
+def main():
+    with open(TOWNS_FILE, "r", encoding="utf-8") as f:
+        towns = json.load(f)
+
+    config = {}
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+    domain = config.get("domain", "https://YOUR-DOMAIN-HERE.example").rstrip("/")
+    phone = config.get("phone", "0706855633")
+    email = config.get("email", "Contact details coming soon")
+
+    with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    rendered_texts = []
+    sitemap_urls = [f"  <url><loc>{domain}/</loc></url>"]
+
+    for town in towns:
+        slug = town["slug"]
+        name = town["name"]
+        county = town.get("county", "")
+        areas = town.get("areas_served", [])
+        faqs = town.get("faqs", [])
+
+        areas_html = "\n".join(
+            f'        <div class="location-item"><span class="location-index">{i+1:02d}</span><span>{area}</span><span class="location-arrow">✳</span></div>'
+            for i, area in enumerate(areas)
+        )
+
+        faqs_html = "\n".join(
+            f'        <details><summary>{item["question"]}<span>+</span></summary><p>{item["answer"]}</p></details>'
+            for item in faqs
+        )
+
+        replacements = {
+            "{{domain}}": domain,
+            "{{phone}}": phone,
+            "{{email}}": email,
+            "{{slug}}": slug,
+            "{{name}}": name,
+            "{{name_upper}}": name.upper(),
+            "{{county}}": county,
+            "{{county_upper}}": county.upper(),
+            "{{region}}": town.get("region", ""),
+            "{{meta_title}}": town.get("meta_title", f"Cleaning Services in {name} | EverClean Services"),
+            "{{meta_description}}": town.get("meta_description", ""),
+            "{{hero_eyebrow}}": town.get("hero_eyebrow", f"CLEANING IN {name.upper()}"),
+            "{{hero_headline}}": town.get("hero_headline", f"Cleaning services in {name}."),
+            "{{hero_intro}}": town.get("hero_intro", ""),
+            "{{property_focus}}": town.get("property_focus", "homes and commercial offices"),
+            "{{local_challenge_focus}}": town.get("local_challenge_focus", "everyday dust and upkeep"),
+            "{{local_context_heading}}": town.get("local_context_heading", f"Local care in {name} · Consistent Quality. Lasting Cleanliness"),
+            "{{local_context_body}}": town.get("local_context_body", ""),
+            "{{areas_html}}": areas_html,
+            "{{faqs_html}}": faqs_html,
+        }
+
+        page_html = template
+        for key, val in replacements.items():
+            page_html = page_html.replace(key, str(val))
+
+        out_dir = ROOT / slug
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "index.html").write_text(page_html, encoding="utf-8")
+
+        rendered_texts.append((name, strip_html(page_html)))
+        sitemap_urls.append(f"  <url><loc>{domain}/{slug}/</loc></url>")
+
+    sync_homepage(towns)
+
+    sitemap_content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(sitemap_urls)
+        + "\n</urlset>\n"
     )
+    (ROOT / "sitemap.xml").write_text(sitemap_content, encoding="utf-8")
 
-    # Update contact details block in #contact
-    h = h.replace("<strong>Contact details coming soon</strong>", f'<strong><a href="{tel_href}" style="color: inherit; text-decoration: none;">{phone}</a></strong>')
-    h = h.replace("placeholder=\"+254 ...\"", f"placeholder=\"{phone}\"")
-    return h
+    robots_content = f"User-agent: *\nAllow: /\nSitemap: {domain}/sitemap.xml\n"
+    (ROOT / "robots.txt").write_text(robots_content, encoding="utf-8")
 
-updated_index = apply_branding_to_html(src_html)
-with open("pkg/index.html", "w", encoding="utf-8") as f:
-    f.write(updated_index)
+    warnings = 0
+    for i in range(len(rendered_texts)):
+        for j in range(i + 1, len(rendered_texts)):
+            if difflib.SequenceMatcher(None, rendered_texts[i][1], rendered_texts[j][1]).quick_ratio() > 0.82:
+                ratio = difflib.SequenceMatcher(None, rendered_texts[i][1], rendered_texts[j][1]).ratio()
+                if ratio > 0.82:
+                    print(f"WARNING: {rendered_texts[i][0]} and {rendered_texts[j][0]} are {ratio:.1%} similar.")
+                    warnings += 1
 
-with open("index_updated.html", "w", encoding="utf-8") as f:
-    f.write(updated_index)
+    print(f"Generated {len(towns)} town pages, synced index.html, sitemap.xml, and robots.txt ({warnings} similarity warnings).")
 
-# Update town-page.html template too so generated town pages use EverClean Services, tagline, logo, and 0706855633
-updated_tpl = apply_branding_to_html(src_tpl)
-updated_tpl = updated_tpl.replace("{{phone}}", f'<a href="{tel_href}" style="color: inherit; text-decoration: none;">{phone}</a>')
-with open("pkg/templates/town-page.html", "w", encoding="utf-8") as f:
-    f.write(updated_tpl)
 
-# Update site_config.json
-site_cfg = {
-    "domain": "https://YOUR-DOMAIN-HERE.example",
-    "phone": phone,
-    "email": "Contact details coming soon"
-}
-os.makedirs("pkg/data", exist_ok=True)
-with open("pkg/data/site_config.json", "w", encoding="utf-8") as f:
-    json.dump(site_cfg, f, indent=2)
-
-# Update towns.json titles/descriptions/copy referencing Reste Propre
-updated_towns = []
-for t in towns:
-    t_copy = json.loads(json.dumps(t))
-    for k, v in list(t_copy.items()):
-        if isinstance(v, str):
-            t_copy[k] = v.replace("Reste Propre", brand_name)
-        elif isinstance(v, list):
-            new_list = []
-            for item in v:
-                if isinstance(item, dict):
-                    item = {ik: (iv.replace("Reste Propre", brand_name) if isinstance(iv, str) else iv) for ik, iv in item.items()}
-                elif isinstance(item, str):
-                    item = item.replace("Reste Propre", brand_name)
-                new_list.append(item)
-            t_copy[k] = new_list
-    updated_towns.append(t_copy)
-
-with open("pkg/data/towns.json", "w", encoding="utf-8") as f:
-    json.dump(updated_towns, f, indent=2, ensure_ascii=False)
-
-# Update scripts/generate_pages.py with new defaults & branding
-with open("pkg/scripts/generate_pages.py", "r", encoding="utf-8") as f:
-    gen_code = f.read()
-
-gen_code = gen_code.replace('phone = config.get("phone", "Contact details coming soon")', f'phone = config.get("phone", "{phone}")')
-gen_code = gen_code.replace('f"Cleaning Services in {name} | Reste Propre"', f'f"Cleaning Services in {{name}} | {brand_name}"')
-gen_code = gen_code.replace('f"Local care in {name}"', f'f"Local care in {{name}} · {tagline}"')
-
-with open("pkg/scripts/generate_pages.py", "w", encoding="utf-8") as f:
-    f.write(gen_code)
-
-zip_v3 = "everclean_services_84_towns_v3.zip"
-with zipfile.ZipFile(zip_v3, "w", zipfile.ZIP_DEFLATED) as zf:
-    zf.write("pkg/index.html", "index.html")
-    zf.write("pkg/data/towns.json", "data/towns.json")
-    zf.write("pkg/data/site_config.json", "data/site_config.json")
-    zf.write("pkg/templates/town-page.html", "templates/town-page.html")
-    zf.write("pkg/scripts/generate_pages.py", "scripts/generate_pages.py")
-
-print("Updated v3 bundle:", zip_v3, "Size:", os.path.getsize(zip_v3))
-print("Phone present in index_updated.html:", phone in updated_index)
-print("Brand present in index_updated.html:", brand_name in updated_index)
-print("Tagline present in index_updated.html:", tagline in updated_index)
-print("Logo present in index_updated.html:", logo_url in updated_index)
+if __name__ == "__main__":
+    main()
