@@ -1,0 +1,28 @@
+[
+  {
+    "name": "Nairobi",
+    "county": "Nairobi County",
+    "slug": "cleaning-services-nairobi",
+    "nearby_areas": ["Westlands", "Kilimani", "Karen", "Lavington", "Kileleshwa"],
+    "property_types": ["apartments", "family homes", "offices", "retail and hospitality spaces"],
+    "local_intro": "From city apartments and family homes to busy offices and customer-facing premises, cleaning needs in Nairobi can vary widely from one property to the next. Reste Propre discusses the space, its use and your priorities before preparing a suitable cleaning plan.",
+    "local_faq": [
+      {"q": "Can I request apartment cleaning in Nairobi?", "a": "Yes. You can enquire about apartment cleaning, including the rooms and tasks you want covered. Share your estate or neighbourhood and the size of the space when requesting a quote."},
+      {"q": "Do you handle office cleaning in Nairobi?", "a": "Office cleaning is one of the services Reste Propre is set up to discuss. Tell us about your workplace, preferred schedule and cleaning requirements so availability can be confirmed."}
+    ],
+    "local_note": "Tell us which Nairobi neighbourhood your property is in and whether it is a home, office or commercial space."
+  },
+  {
+    "name": "Machakos",
+    "county": "Machakos County",
+    "slug": "cleaning-services-machakos",
+    "nearby_areas": ["Machakos Town", "Athi River", "Mlolongo", "Syokimau", "Kangundo"],
+    "property_types": ["family homes", "apartments", "offices", "shops and commercial premises"],
+    "local_intro": "Homes, apartments, offices and growing commercial premises around Machakos can each call for a different cleaning routine. Reste Propre starts by understanding the type of property, the areas that need attention and the timing that works for you before discussing a tailored quote.",
+    "local_faq": [
+      {"q": "Can I ask for a one-off deep clean in Machakos?", "a": "You can enquire about a one-off deep clean and explain which rooms or areas need attention. The team can confirm the scope and availability before a booking is agreed."},
+      {"q": "Do you clean homes as well as business premises in Machakos?", "a": "Reste Propre is designed for both residential and commercial cleaning enquiries. Include the property type and your requirements so the right service can be discussed."}
+    ],
+    "local_note": "Include your specific area around Machakos and the type of property when you contact the team."
+  }
+]
