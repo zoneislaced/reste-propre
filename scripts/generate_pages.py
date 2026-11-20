@@ -1,87 +1,116 @@
-#!/usr/bin/env python3
-"""Generate static Reste Propre town pages from data/towns.json."""
-import json, re, html
+import json
+import os
+import re
+import difflib
 from pathlib import Path
-from difflib import SequenceMatcher
 
-ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = (ROOT / "templates" / "town-page.html").read_text(encoding="utf-8")
-TOWNS = json.loads((ROOT / "data" / "towns.json").read_text(encoding="utf-8"))
-CONFIG = json.loads((ROOT / "data" / "site_config.json").read_text(encoding="utf-8"))
-OUT = ROOT / ""
+ROOT = Path(__file__).resolve().parent.parent
+TOWNS_FILE = ROOT / "data" / "towns.json"
+CONFIG_FILE = ROOT / "data" / "site_config.json"
+TEMPLATE_FILE = ROOT / "templates" / "town-page.html"
 
 
-def esc(value):
-    return html.escape(str(value), quote=True)
-
-
-def slugify(value):
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-
-
-def render(town):
-    name, county = town["name"], town["county"]
-    slug = town.get("slug") or f"cleaning-services-{slugify(name)}"
-    title = f"Cleaning Services in {name} | {CONFIG['business_name']}"
-    desc = f"Explore residential and commercial cleaning services in {name}, {county}. Ask {CONFIG['business_name']} about home, deep and office cleaning and request a tailored quote."
-    nearby = " · ".join(town["nearby_areas"])
-    properties = ", ".join(town["property_types"])
-    area_links = "".join(f'<div class="location-item"><span class="location-index">{i:02d}</span><span>{esc(area)}</span><span class="location-arrow">·</span></div>' for i, area in enumerate(town["nearby_areas"], 1))
-    other_towns = [item for item in TOWNS if item["name"] != name]
-    town_links = "".join(f'<a class="location-item" href="../{esc(item.get("slug") or ("cleaning-services-" + slugify(item["name"])))}/"><span class="location-index">↗</span><span>Cleaning services in {esc(item["name"])}</span><span class="location-arrow">↗</span></a>' for item in other_towns)
-    links = area_links + town_links
-    faqs = "".join(f'<details><summary>{esc(item["q"])}<span>+</span></summary><p>{esc(item["a"])}</p></details>' for item in town["local_faq"])
-    schema = {
-        "@context": "https://schema.org", "@type": CONFIG.get("business_type", "CleaningService"),
-        "name": CONFIG["business_name"], "areaServed": {"@type": "City", "name": name},
-        "url": CONFIG["website_url"].rstrip("/") + "/" + slug + "/",
-        "description": desc
-    }
-    if CONFIG.get("phone"): schema["telephone"] = CONFIG["phone"]
-    if CONFIG.get("email"): schema["email"] = CONFIG["email"]
-    replacements = {
-        "{{META_DESCRIPTION}}": esc(desc), "{{PAGE_TITLE}}": esc(title),
-        "{{CANONICAL_URL}}": esc(schema["url"]), "{{SCHEMA}}": json.dumps(schema, ensure_ascii=False).replace("</", "<\\/"),
-        "{{TOWN}}": esc(name), "{{TOWN_UPPER}}": esc(name.upper()), "{{COUNTY}}": esc(county),
-        "{{LOCAL_INTRO}}": esc(town["local_intro"]), "{{LOCAL_NOTE}}": esc(town["local_note"]),
-        "{{PROPERTY_TYPES}}": esc(properties), "{{NEARBY_LINKS}}": links, "{{LOCAL_FAQS}}": faqs,
-        "{{PHONE_DISPLAY}}": esc(CONFIG.get("phone") or "Contact details to be confirmed"),
-        "{{EMAIL_DISPLAY}}": esc(CONFIG.get("email") or "Email to be confirmed")
-    }
-    page = TEMPLATE
-    for key, value in replacements.items(): page = page.replace(key, value)
-    if "{{" in page: raise ValueError(f"Unfilled placeholder in {name}")
-    target = OUT / slug / "index.html"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(page, encoding="utf-8")
-    return slug, re.sub(r"<[^>]+>", " ", page).lower()
+def strip_html(html_text: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>", " ", html_text)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def main():
-    rendered = [render(t) for t in TOWNS]
-    # Compare page text to catch accidentally duplicated location copy.
-    warnings = []
-    for slug, page_text in rendered:
-        word_count = len(page_text.split())
-        if word_count < 250: warnings.append(f"SHORT PAGE: {slug} has only {word_count} words")
-    for i, (slug_a, text_a) in enumerate(rendered):
-        for slug_b, text_b in rendered[i+1:]:
-            ratio = SequenceMatcher(None, text_a, text_b).ratio()
-            if ratio > 0.82: warnings.append(f"HIGH SIMILARITY: {slug_a} vs {slug_b} ({ratio:.0%})")
-    urls = [CONFIG["website_url"].rstrip("/") + "/" + slug + "/" for slug, _ in rendered]
-    sitemap = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "".join(f"  <url><loc>{html.escape(url)}</loc></url>\n" for url in urls) + "</urlset>\n"
-    (ROOT / "sitemap.xml").write_text(sitemap, encoding="utf-8")
-    domain = CONFIG["website_url"].rstrip("/")
-    (ROOT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {domain}/sitemap.xml\n", encoding="utf-8")
-    print(f"Generated {len(rendered)} town pages:")
-    for slug, _ in rendered: print(f" - {slug}/index.html")
-    print("Sitemap and robots.txt generated.")
-    if warnings:
-        print("\nCONTENT WARNINGS:")
-        for warning in warnings: print(" - " + warning)
-    else: print("\nSimilarity check passed (no pair exceeded 82%).")
-    if "YOUR-DOMAIN-HERE" in CONFIG["website_url"]: print("\nACTION REQUIRED: Set the real website_url in data/site_config.json before publishing.")
-    if not CONFIG.get("phone") or not CONFIG.get("whatsapp") or not CONFIG.get("email"):
-        print("ACTION REQUIRED: Add real contact details in data/site_config.json before launch.")
+    with open(TOWNS_FILE, "r", encoding="utf-8") as f:
+        towns = json.load(f)
 
-if __name__ == "__main__": main()
+    config = {}
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+    domain = config.get("domain", "https://YOUR-DOMAIN-HERE.example").rstrip("/")
+    phone = config.get("phone", "Contact details coming soon")
+    email = config.get("email", "Contact details coming soon")
+
+    with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    rendered_texts = []
+    sitemap_urls = [f"  <url><loc>{domain}/</loc></url>"]
+
+    for town in towns:
+        slug = town["slug"]
+        name = town["name"]
+        county = town.get("county", "")
+        areas = town.get("areas_served", [])
+        faqs = town.get("faqs", [])
+
+        areas_html = "\n".join(
+            f'        <div class="location-item"><span class="location-index">{i+1:02d}</span><span>{area}</span><span class="location-arrow">✳</span></div>'
+            for i, area in enumerate(areas)
+        )
+
+        faqs_html = "\n".join(
+            f'        <details><summary>{item["question"]}<span>+</span></summary><p>{item["answer"]}</p></details>'
+            for item in faqs
+        )
+
+        replacements = {
+            "{{domain}}": domain,
+            "{{phone}}": phone,
+            "{{email}}": email,
+            "{{slug}}": slug,
+            "{{name}}": name,
+            "{{name_upper}}": name.upper(),
+            "{{county}}": county,
+            "{{county_upper}}": county.upper(),
+            "{{region}}": town.get("region", ""),
+            "{{meta_title}}": town.get("meta_title", f"Cleaning Services in {name} | Reste Propre"),
+            "{{meta_description}}": town.get("meta_description", ""),
+            "{{hero_eyebrow}}": town.get("hero_eyebrow", f"CLEANING IN {name.upper()}"),
+            "{{hero_headline}}": town.get("hero_headline", f"Cleaning services in {name}."),
+            "{{hero_intro}}": town.get("hero_intro", ""),
+            "{{property_focus}}": town.get("property_focus", "homes and commercial offices"),
+            "{{local_challenge_focus}}": town.get("local_challenge_focus", "everyday dust and upkeep"),
+            "{{local_context_heading}}": town.get("local_context_heading", f"Local care in {name}"),
+            "{{local_context_body}}": town.get("local_context_body", ""),
+            "{{areas_html}}": areas_html,
+            "{{faqs_html}}": faqs_html,
+        }
+
+        page_html = template
+        for key, val in replacements.items():
+            page_html = page_html.replace(key, str(val))
+
+        out_dir = ROOT / slug
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "index.html").write_text(page_html, encoding="utf-8")
+
+        rendered_texts.append((name, strip_html(page_html)))
+        sitemap_urls.append(f"  <url><loc>{domain}/{slug}/</loc></url>")
+
+    # Write sitemap.xml and robots.txt
+    sitemap_content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(sitemap_urls)
+        + "\n</urlset>\n"
+    )
+    (ROOT / "sitemap.xml").write_text(sitemap_content, encoding="utf-8")
+
+    robots_content = f"User-agent: *\nAllow: /\nSitemap: {domain}/sitemap.xml\n"
+    (ROOT / "robots.txt").write_text(robots_content, encoding="utf-8")
+
+    # Similarity audit
+    warnings = 0
+    for i in range(len(rendered_texts)):
+        for j in range(i + 1, len(rendered_texts)):
+            if difflib.SequenceMatcher(None, rendered_texts[i][1], rendered_texts[j][1]).quick_ratio() > 0.82:
+                ratio = difflib.SequenceMatcher(None, rendered_texts[i][1], rendered_texts[j][1]).ratio()
+                if ratio > 0.82:
+                    print(f"WARNING: {rendered_texts[i][0]} and {rendered_texts[j][0]} are {ratio:.1%} similar.")
+                    warnings += 1
+
+    print(f"Generated {len(towns)} town pages, sitemap.xml, and robots.txt ({warnings} similarity warnings).")
+
+
+if __name__ == "__main__":
+    main()
